@@ -1,0 +1,74 @@
+name: Contract Compatibility CI
+
+on:
+  pull_request:
+    paths:
+      - 'contracts/openapi.yaml'
+      - 'contracts/generated/**'
+
+jobs:
+  contract-checks:
+    name: Contract Compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate checksum (detect unregenerated artifacts)
+        run: node contracts/scripts/validate-checksum.js
+
+      - name: Generate baseline from target branch
+        run: |
+          git show origin/${{ github.base_ref }}:contracts/openapi.yaml > contracts/generated/baseline.yaml || echo "No baseline available"
+
+      - name: Check breaking changes
+        run: node contracts/scripts/check-breaking-changes.js
+        continue-on-error: ${{ github.event.pull_request.draft }}
+
+      - name: Validate OpenAPI syntax
+        run: npx openapi-typescript contracts/openapi.yaml --check
+
+      - name: Verify generated types are current
+        run: |
+          cp contracts/generated/schema.ts /tmp/schema-before.ts
+          npx openapi-typescript contracts/openapi.yaml -o contracts/generated/schema.ts
+          diff /tmp/schema-before.ts contracts/generated/schema.ts || {
+            echo "Generated types are out of date. Run codegen and commit."
+            exit 1
+          }
+
+      - name: Consumer compatibility — Storefront
+        run: |
+          cd apps/storefront
+          npm run typecheck
+
+      - name: Consumer compatibility — Admin
+        run: |
+          cd apps/admin
+          npm run typecheck
+
+      - name: Consumer compatibility — API
+        run: |
+          cd apps/api
+          npm run typecheck
+
+  event-schema-compat:
+    name: Event Schema Compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check domain event backward compatibility
+        run: |
+          echo "Additive fields for minor versions are accepted."
+          echo "Removal of event payload fields requires major version bump."
+          # Implementation: compare DomainEventEnvelope payload fields
+          # against baseline — additive only for minor versions

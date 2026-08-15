@@ -1,0 +1,17 @@
+# Prettier ignore
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+coverage/
+contracts/generated/
+_bmad-output/
+.beads/
+.cass/
+.agents/
+.claude/
+*.min.js
+*.min.css
+pnpm-lock.yaml
+bun.lockb

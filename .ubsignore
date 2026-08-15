@@ -1,0 +1,24 @@
+# UBS ignore patterns for Clothing Commerce Platform
+# Planning artifacts and tool configs — not production code
+
+# BMAD planning
+_bmad-output/**
+_bmad/**
+
+# Tool configs
+.beads/**
+.cass/**
+.agents/**
+.claude/**
+
+# Dependencies
+node_modules/**
+.venv/**
+__pycache__/**
+
+# Generated
+*.jsonl
+.ubs-report.json
+
+# Docs
+*.md

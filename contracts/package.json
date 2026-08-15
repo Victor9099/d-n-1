@@ -1,0 +1,28 @@
+{
+  "name": "@ecom/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate:types": "openapi-typescript openapi.yaml -o generated/schema.ts",
+    "generate:checksum": "node scripts/checksum.js",
+    "generate:mocks": "node scripts/generate-mocks.js",
+    "codegen": "npm run generate:types && npm run generate:checksum && npm run generate:mocks",
+    "build": "npm run codegen",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.0.0",
+    "typescript": "^5.5.0"
+  },
+  "main": "./generated/schema.ts",
+  "types": "./generated/schema.ts",
+  "exports": {
+    ".": {
+      "types": "./generated/schema.ts"
+    },
+    "./mocks": {
+      "types": "./generated/mocks.ts"
+    }
+  }
+}

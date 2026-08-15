@@ -1,0 +1,2753 @@
+openapi: 3.1.0
+info:
+  title: Êm Clothing Commerce Platform API
+  version: 1.0.0
+  description: |
+    Vietnam-first direct-to-consumer clothing commerce platform.
+    All money values are integer VND. All IDs are opaque UUIDs.
+    All timestamps are UTC ISO-8601.
+
+    ## Cross-Cutting Protocol Rules
+
+    ### Idempotency Protocol
+    Commands marked idempotent require `Idempotency-Key` header binding:
+    - One actor/scope + operation + canonical payload
+    - Compatible replay returns original status/body
+    - Payload mismatch returns stable `idempotency_payload_mismatch` code
+    - **Persistence/rotation rule**: Client persists current key through timeout
+      and reload until result resolves. Key rotates ONLY after: material edit,
+      new quote, or explicitly new command. Never rotate on transient failure.
+
+    ### Optimistic Concurrency
+    Mutable projections include `aggregateVersion` and `serverTime`.
+    Mutations requiring concurrency control accept `If-Match` header with
+    expected version. Mismatch returns 409 Conflict.
+
+    ### Polling Protocol
+    - Clients accept only monotonically newer versions
+    - Clients cancel superseded polls when newer version arrives
+    - Polling stops when no `permittedNextActions` remain (terminal state)
+
+    ### Browser Security Protocol
+    - Session cookies: Secure, HttpOnly, configured SameSite policy
+    - State changes enforce origin and CSRF protections
+    - Token redemption pages: `Referrer-Policy: no-referrer`, no third-party
+      resources before token removal
+    - Raw OTP/lookup/claim values prohibited in URLs after redemption,
+      logs, telemetry, browser storage, debug data
+    - Protected cache keys include authenticated subject + permission projection
+    - Logout/switch/rotation/role-change/401/403 clear protected data before
+      another subject renders
+
+    ### Error Code Catalog
+    | Code | Status | Description |
+    |------|--------|-------------|
+    | `validation_error` | 400 | Request body validation failed |
+    | `unauthorized` | 401 | Authentication required |
+    | `forbidden` | 403 | Insufficient permissions (deny-by-default) |
+    | `not_found` | 404 | Resource not found |
+    | `conflict` | 409 | Optimistic concurrency conflict |
+    | `idempotency_payload_mismatch` | 409 | Idempotency-Key payload mismatch |
+    | `rate_limited` | 429 | Rate limit exceeded |
+    | `internal_error` | 500 | Unexpected server error |
+    | `payment_failed` | 422 | Payment gateway failure |
+    | `reservation_expired` | 422 | Inventory reservation expired |
+    | `order_transition_invalid` | 422 | Invalid order state transition |
+    | `slug_conflict` | 409 | Slug already in use |
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Security
+# ─────────────────────────────────────────────────────────────────────────────
+security:
+  - cookieAuth: []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tags (module groupings)
+# ─────────────────────────────────────────────────────────────────────────────
+tags:
+  - name: Catalog
+    description: Public catalog queries (products, posts, slug resolution)
+  - name: Auth
+    description: Customer email OTP authentication
+  - name: StaffAuth
+    description: Staff email OTP authentication
+  - name: Cart
+    description: Cart management
+  - name: Checkout
+    description: Quote and order placement
+  - name: Payment
+    description: VNPAY payment and status
+  - name: GuestOrder
+    description: Guest order lookup and tracking
+  - name: CustomerOrder
+    description: Customer order history and claim
+  - name: AdminCatalog
+    description: Admin product management
+  - name: AdminContent
+    description: Admin post management
+  - name: AdminMedia
+    description: Admin media management
+  - name: AdminOrders
+    description: Admin order queue and fulfillment
+  - name: AdminPayment
+    description: Admin refund operations
+  - name: AdminStaff
+    description: Admin staff management
+  - name: AdminConfig
+    description: Admin configuration
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paths (placeholder structure — operations added in subsequent stories)
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check endpoint
+      tags: [Infrastructure]
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  # ── Public Catalog Operations ─────────────────────────────────────────────
+  /products:
+    get:
+      operationId: listPublishedProducts
+      summary: List published products
+      tags: [Catalog]
+      security: []
+      x-permission: public.catalog.read
+      parameters:
+        - $ref: "#/components/parameters/CursorParam"
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Paginated list of published products
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ProductSummary"
+
+  /products/{slug}:
+    get:
+      operationId: getPublishedProduct
+      summary: Get published product detail
+      tags: [Catalog]
+      security: []
+      x-permission: public.catalog.read
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Product URL slug
+      responses:
+        "200":
+          description: Product detail with purchasable variants
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /posts:
+    get:
+      operationId: listPublishedPosts
+      summary: List published posts
+      tags: [Catalog]
+      security: []
+      x-permission: public.catalog.read
+      parameters:
+        - $ref: "#/components/parameters/CursorParam"
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Paginated list of published posts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/PostSummary"
+
+  /posts/{slug}:
+    get:
+      operationId: getPublishedPost
+      summary: Get published post detail
+      tags: [Catalog]
+      security: []
+      x-permission: public.catalog.read
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Post URL slug
+      responses:
+        "200":
+          description: Post detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /resolve/{slug}:
+    get:
+      operationId: resolvePublishedSlug
+      summary: Resolve a slug to current resource or redirect
+      tags: [Catalog]
+      security: []
+      x-permission: public.catalog.read
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL slug to resolve
+      responses:
+        "200":
+          description: Resource found at current slug
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SlugResolution"
+        "301":
+          description: Slug redirected (old slug → new resource)
+          headers:
+            Location:
+              schema:
+                type: string
+              description: New canonical URL
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Customer Auth Operations ──────────────────────────────────────────────
+  /auth/email-otp/challenges:
+    post:
+      operationId: createEmailOtpChallenge
+      summary: Request email OTP challenge for customer
+      tags: [Auth]
+      security: []
+      x-permission: public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOtpChallengeRequest"
+      responses:
+        "202":
+          description: Challenge accepted (never reveals account existence)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChallengeAccepted"
+
+  /auth/email-otp/verifications:
+    post:
+      operationId: verifyEmailOtp
+      summary: Verify email OTP and establish session
+      tags: [Auth]
+      security: []
+      x-permission: public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOtpVerificationRequest"
+      responses:
+        "200":
+          description: Verification successful, session established
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthVerificationResponse"
+        "401":
+          description: Invalid or expired OTP
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+
+  # ── Cart Operations ───────────────────────────────────────────────────────
+  /cart:
+    get:
+      operationId: getCart
+      summary: Get current customer cart
+      tags: [Cart]
+      x-permission: cart.self.manage
+      responses:
+        "200":
+          description: Current cart
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+
+  /cart/items/{variantId}:
+    put:
+      operationId: putCartItem
+      summary: Add or update cart item quantity
+      tags: [Cart]
+      x-permission: cart.self.manage
+      parameters:
+        - name: variantId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CartItemInput"
+      responses:
+        "200":
+          description: Cart updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+    delete:
+      operationId: deleteCartItem
+      summary: Remove item from cart
+      tags: [Cart]
+      x-permission: cart.self.manage
+      parameters:
+        - name: variantId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Cart updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cart"
+
+  # ── Checkout Operations ───────────────────────────────────────────────────
+  /checkout/quotes:
+    post:
+      operationId: createCheckoutQuote
+      summary: Create a quote from current cart
+      tags: [Checkout]
+      x-permission: cart.self.manage
+      responses:
+        "201":
+          description: Quote created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quote"
+
+  /orders:
+    post:
+      operationId: placeOrder
+      summary: Place an order from a quote (idempotent)
+      tags: [Checkout]
+      x-permission: checkout.self.place
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceOrderRequest"
+      responses:
+        "201":
+          description: Order placed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaceOrderResult"
+
+  # ── Payment Operations ────────────────────────────────────────────────────
+  /payments/vnpay/{attemptId}/start:
+    post:
+      operationId: startVnpayPayment
+      summary: Start VNPAY payment for an attempt
+      tags: [Payment]
+      x-permission: checkout.self.place
+      parameters:
+        - name: attemptId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: VNPAY payment URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VnpayPaymentStartResponse"
+
+  /orders/{orderId}/vnpay-attempts:
+    post:
+      operationId: retryVnpayPayment
+      summary: Retry VNPAY payment for a failed attempt (idempotent)
+      tags: [Payment]
+      x-permission: payment.self.retry
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      responses:
+        "200":
+          description: VNPAY payment retry URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VnpayPaymentStartResponse"
+
+  /checkout/payment-status:
+    get:
+      operationId: getCheckoutPaymentStatus
+      summary: Get current order/payment/fulfillment status
+      tags: [Checkout]
+      x-permission: checkout.status.read
+      parameters:
+        - name: orderId
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Order status projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderStatusProjection"
+
+  # ── Guest Order Operations ────────────────────────────────────────────────
+  /orders/guest/lookup-challenges:
+    post:
+      operationId: createGuestLookupChallenge
+      summary: Create guest order lookup challenge (email OTP)
+      tags: [GuestOrder]
+      security: []
+      x-permission: order.guest.read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOtpChallengeRequest"
+      responses:
+        "202":
+          description: Challenge accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChallengeAccepted"
+
+  /orders/guest/lookup-redemptions:
+    post:
+      operationId: redeemGuestLookup
+      summary: Redeem guest lookup challenge to get order access
+      tags: [GuestOrder]
+      security: []
+      x-permission: order.guest.read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOtpVerificationRequest"
+      responses:
+        "200":
+          description: Guest order access granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestOrderLookupResult"
+
+  /orders/guest/current:
+    get:
+      operationId: getGuestOrder
+      summary: Get current guest order
+      tags: [GuestOrder]
+      security: []
+      x-permission: order.guest.read
+      responses:
+        "200":
+          description: Guest order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Customer Order Operations ─────────────────────────────────────────────
+  /me/orders:
+    get:
+      operationId: listMyOrders
+      summary: List customer's own orders
+      tags: [CustomerOrder]
+      x-permission: order.self.read
+      parameters:
+        - $ref: "#/components/parameters/CursorParam"
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Paginated orders
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/OrderSummary"
+
+  /me/orders/{orderId}:
+    get:
+      operationId: getMyOrder
+      summary: Get customer's own order detail
+      tags: [CustomerOrder]
+      x-permission: order.self.read
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /me/orders/claim-challenges:
+    post:
+      operationId: createOrderClaimChallenge
+      summary: Create order claim challenge (email OTP for claiming past guest orders)
+      tags: [CustomerOrder]
+      x-permission: order.self.claim
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOtpChallengeRequest"
+      responses:
+        "202":
+          description: Challenge accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChallengeAccepted"
+
+  /me/orders/claims:
+    post:
+      operationId: redeemOrderClaim
+      summary: Redeem order claim to link guest order to customer account
+      tags: [CustomerOrder]
+      x-permission: order.self.claim
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderClaimRedemptionRequest"
+      responses:
+        "200":
+          description: Order claimed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDetail"
+
+  # ── Admin Product Operations ──────────────────────────────────────────────
+  /admin/products:
+    get:
+      operationId: adminListProducts
+      summary: List all products (admin)
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - $ref: "#/components/parameters/CursorParam"
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Paginated products
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AdminProductSummary"
+    post:
+      operationId: adminCreateProduct
+      summary: Create new product draft
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminProductCreateRequest"
+      responses:
+        "201":
+          description: Product created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProductDetail"
+
+  /admin/products/{id}:
+    get:
+      operationId: adminGetProduct
+      summary: Get product detail (admin)
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Product detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProductDetail"
+    patch:
+      operationId: adminUpdateProduct
+      summary: Update product
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/ExpectedVersionHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminProductUpdateRequest"
+      responses:
+        "200":
+          description: Product updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProductDetail"
+
+  /admin/products/{id}/publish:
+    post:
+      operationId: adminPublishProduct
+      summary: Publish product
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Product published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProductDetail"
+
+  /admin/products/{id}/archive:
+    post:
+      operationId: adminArchiveProduct
+      summary: Archive product
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Product archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProductDetail"
+
+  # ── Admin Variant Operations ──────────────────────────────────────────────
+  /admin/products/{id}/variants:
+    get:
+      operationId: adminListVariants
+      summary: List variants for product
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Variants list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminVariant"
+    post:
+      operationId: adminCreateVariant
+      summary: Create variant
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminVariantCreateRequest"
+      responses:
+        "201":
+          description: Variant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminVariant"
+
+  /admin/products/{productId}/variants/{variantId}:
+    patch:
+      operationId: adminUpdateVariant
+      summary: Update variant
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - name: variantId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/ExpectedVersionHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminVariantUpdateRequest"
+      responses:
+        "200":
+          description: Variant updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminVariant"
+
+  /admin/products/{productId}/variants/{variantId}/archive:
+    post:
+      operationId: adminArchiveVariant
+      summary: Archive variant
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - name: variantId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Variant archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminVariant"
+
+  /admin/products/{productId}/variants/{variantId}/adjust-stock:
+    post:
+      operationId: adminAdjustVariantStock
+      summary: Adjust variant stock (idempotent)
+      tags: [AdminCatalog]
+      x-permission: catalog.manage
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - name: variantId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminStockAdjustRequest"
+      responses:
+        "200":
+          description: Stock adjusted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminVariant"
+
+  # ── Admin Post Operations ─────────────────────────────────────────────────
+  /admin/posts:
+    get:
+      operationId: adminListPosts
+      summary: List all posts (admin)
+      tags: [AdminContent]
+      x-permission: content.manage
+      parameters:
+        - $ref: "#/components/parameters/CursorParam"
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Paginated posts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AdminPostSummary"
+    post:
+      operationId: adminCreatePost
+      summary: Create new post draft
+      tags: [AdminContent]
+      x-permission: content.manage
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPostCreateRequest"
+      responses:
+        "201":
+          description: Post created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPostDetail"
+
+  /admin/posts/{id}:
+    get:
+      operationId: adminGetPost
+      summary: Get post detail (admin)
+      tags: [AdminContent]
+      x-permission: content.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Post detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPostDetail"
+    patch:
+      operationId: adminUpdatePost
+      summary: Update post
+      tags: [AdminContent]
+      x-permission: content.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/ExpectedVersionHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminPostUpdateRequest"
+      responses:
+        "200":
+          description: Post updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPostDetail"
+
+  /admin/posts/{id}/publish:
+    post:
+      operationId: adminPublishPost
+      summary: Publish post
+      tags: [AdminContent]
+      x-permission: content.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Post published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPostDetail"
+
+  /admin/posts/{id}/archive:
+    post:
+      operationId: adminArchivePost
+      summary: Archive post
+      tags: [AdminContent]
+      x-permission: content.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Post archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPostDetail"
+
+  /admin/posts/{id}/preview:
+    get:
+      operationId: adminPreviewPost
+      summary: Get preview URL for post
+      tags: [AdminContent]
+      x-permission: content.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Preview URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  previewUrl:
+                    type: string
+                    format: uri
+                  expiresAt:
+                    $ref: "#/components/schemas/Timestamp"
+
+  # ── Admin Media Operations ────────────────────────────────────────────────
+  /admin/media/authorize-upload:
+    post:
+      operationId: adminAuthorizeMediaUpload
+      summary: Authorize direct-to-CDN upload
+      tags: [AdminMedia]
+      x-permission: media.manage
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaUploadAuthorizationRequest"
+      responses:
+        "200":
+          description: Upload authorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaUploadAuthorization"
+
+  /admin/media/finalize:
+    post:
+      operationId: adminFinalizeMedia
+      summary: Finalize uploaded media asset
+      tags: [AdminMedia]
+      x-permission: media.manage
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaFinalizeRequest"
+      responses:
+        "200":
+          description: Media finalized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaAsset"
+
+  /admin/media/{id}/attach:
+    post:
+      operationId: adminAttachMedia
+      summary: Attach media to resource
+      tags: [AdminMedia]
+      x-permission: media.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaAttachRequest"
+      responses:
+        "200":
+          description: Media attached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaAsset"
+
+  /admin/media/{id}/detach:
+    post:
+      operationId: adminDetachMedia
+      summary: Detach media from resource
+      tags: [AdminMedia]
+      x-permission: media.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MediaDetachRequest"
+      responses:
+        "200":
+          description: Media detached
+
+  # ── Admin Order Operations ────────────────────────────────────────────────
+  /admin/orders:
+    get:
+      operationId: adminListOrders
+      summary: List all orders (admin)
+      tags: [AdminOrders]
+      x-permission: order.ops.read
+      parameters:
+        - $ref: "#/components/parameters/CursorParam"
+        - $ref: "#/components/parameters/LimitParam"
+      responses:
+        "200":
+          description: Paginated orders with role-specific PII
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PaginatedResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AdminOrderSummary"
+
+  /admin/orders/{id}:
+    get:
+      operationId: adminGetOrder
+      summary: Get order detail (admin, role-specific PII)
+      tags: [AdminOrders]
+      x-permission: order.ops.read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Order detail with PII projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminOrderDetail"
+
+  /admin/orders/{id}/transitions:
+    post:
+      operationId: adminTransitionOrder
+      summary: Execute order state transition (guarded, idempotent)
+      tags: [AdminOrders]
+      x-permission: order.ops.transition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+        - $ref: "#/components/parameters/ExpectedVersionHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminOrderTransitionRequest"
+      responses:
+        "200":
+          description: Transition executed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderStatusProjection"
+
+  # ── Admin Payment/Refund Operations ───────────────────────────────────────
+  /admin/payments/{attemptId}/refund-actions:
+    post:
+      operationId: adminRequestRefund
+      summary: Request refund for payment attempt
+      tags: [AdminPayment]
+      x-permission: payment.refund
+      parameters:
+        - name: attemptId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminRefundRequest"
+      responses:
+        "200":
+          description: Refund initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRefundResult"
+
+  /admin/payments/{attemptId}/refund-status:
+    get:
+      operationId: adminGetRefundStatus
+      summary: Get refund status
+      tags: [AdminPayment]
+      x-permission: payment.refund
+      parameters:
+        - name: attemptId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Refund status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRefundResult"
+
+  /admin/payments/{attemptId}/refund-reconcile:
+    post:
+      operationId: adminReconcileRefund
+      summary: Reconcile refund with gateway
+      tags: [AdminPayment]
+      x-permission: payment.refund
+      parameters:
+        - name: attemptId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Refund reconciled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRefundResult"
+
+  /admin/payments/{attemptId}/refund-redrive:
+    post:
+      operationId: adminRedriveRefund
+      summary: Redrive failed refund
+      tags: [AdminPayment]
+      x-permission: payment.refund
+      parameters:
+        - name: attemptId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      responses:
+        "200":
+          description: Refund redriven
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminRefundResult"
+
+  # ── Admin Staff Operations ────────────────────────────────────────────────
+  /admin/staff:
+    post:
+      operationId: adminCreateStaff
+      summary: Create staff account
+      tags: [AdminStaff]
+      x-permission: staff.manage
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminStaffCreateRequest"
+      responses:
+        "201":
+          description: Staff account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAccount"
+
+  /admin/staff/{id}:
+    get:
+      operationId: adminGetStaff
+      summary: Get staff account
+      tags: [AdminStaff]
+      x-permission: staff.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Staff account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAccount"
+
+  /admin/staff/{id}/disable:
+    post:
+      operationId: adminDisableStaff
+      summary: Disable staff account
+      tags: [AdminStaff]
+      x-permission: staff.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      responses:
+        "200":
+          description: Staff disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAccount"
+
+  /admin/staff/{id}/assign-role:
+    post:
+      operationId: adminAssignStaffRole
+      summary: Assign role to staff
+      tags: [AdminStaff]
+      x-permission: staff.manage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/UUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleAssignment"
+      responses:
+        "200":
+          description: Role assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffAccount"
+
+  # ── Admin Config Operations ───────────────────────────────────────────────
+  /admin/config/shipping:
+    get:
+      operationId: adminGetShippingConfig
+      summary: "Read fixed shipping policy (MVP: no mutation)"
+      tags: [AdminConfig]
+      x-permission: config.read
+      responses:
+        "200":
+          description: Shipping configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingConfigRead"
+
+  # ── Staff Auth Operations ─────────────────────────────────────────────────
+  /staff/auth/email-otp/challenges:
+    post:
+      operationId: createStaffEmailOtpChallenge
+      summary: Request email OTP challenge for staff
+      tags: [StaffAuth]
+      security: []
+      x-permission: public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOtpChallengeRequest"
+      responses:
+        "202":
+          description: Challenge accepted (never reveals account existence)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChallengeAccepted"
+
+  /staff/auth/email-otp/verifications:
+    post:
+      operationId: verifyStaffEmailOtp
+      summary: Verify staff email OTP and establish admin session
+      tags: [StaffAuth]
+      security: []
+      x-permission: public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOtpVerificationRequest"
+      responses:
+        "200":
+          description: Verification successful, admin session established
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthVerificationResponse"
+        "401":
+          description: Invalid or expired OTP
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Components
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+  # ── Security Schemes ──────────────────────────────────────────────────────
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Secure/HttpOnly session cookie with SameSite policy
+
+  # ── Shared Parameters ─────────────────────────────────────────────────────
+  parameters:
+    CursorParam:
+      name: cursor
+      in: query
+      schema:
+        type: string
+      description: Opaque cursor for pagination (from previous response nextCursor)
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Maximum number of items per page
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: |
+        Unique key binding one actor/scope + operation + canonical payload.
+        Compatible replay returns original status/body.
+        Payload mismatch returns idempotency_payload_mismatch.
+    ExpectedVersionHeader:
+      name: If-Match
+      in: header
+      schema:
+        type: integer
+      description: Expected aggregateVersion for optimistic concurrency
+
+  # ── Shared Schemas ────────────────────────────────────────────────────────
+  schemas:
+    # ── Base Types ────────────────────────────────────────────────────────
+    UUID:
+      type: string
+      format: uuid
+      description: Opaque UUID identifier
+
+    Timestamp:
+      type: string
+      format: date-time
+      description: UTC ISO-8601 timestamp
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: integer
+          minimum: 0
+          description: Amount in integer VND (never negative)
+        currency:
+          type: string
+          enum: [VND]
+          description: Currency code (always VND for MVP)
+      description: Money value in integer VND
+
+    # ── Pagination ────────────────────────────────────────────────────────
+    PaginatedResponse:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: {}
+          description: Array of items for current page
+        nextCursor:
+          type: string
+          nullable: true
+          description: Opaque cursor for next page (null if no more pages)
+      description: Opaque cursor pagination response
+
+    # ── Error Response ────────────────────────────────────────────────────
+    ProblemDetails:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI identifying the problem type
+        title:
+          type: string
+          description: Short human-readable summary
+        status:
+          type: integer
+          description: HTTP status code
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence
+        instance:
+          type: string
+          format: uri
+          description: URI identifying the specific occurrence
+        correlationId:
+          type: string
+          description: Correlation ID for debugging and support
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+          description: Field-level validation errors
+      description: RFC 7807 Problem Details with extensions
+
+    FieldError:
+      type: object
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+          description: JSON pointer to the field with error
+        code:
+          type: string
+          description: Machine-readable field error code
+        message:
+          type: string
+          description: Human-readable field error message
+
+    # ── Error Codes ─────────────────────────────────────────────────────
+    ErrorCode:
+      type: string
+      description: Stable machine-readable error code
+      enum:
+        - validation_error
+        - unauthorized
+        - forbidden
+        - not_found
+        - conflict
+        - idempotency_payload_mismatch
+        - rate_limited
+        - internal_error
+        - payment_failed
+        - reservation_expired
+        - order_transition_invalid
+        - slug_conflict
+
+    # ── Versioned Projection ──────────────────────────────────────────────
+    VersionedProjection:
+      type: object
+      required: [aggregateVersion, serverTime]
+      properties:
+        aggregateVersion:
+          type: integer
+          minimum: 1
+          description: Monotonic version for optimistic concurrency
+        serverTime:
+          $ref: "#/components/schemas/Timestamp"
+      description: Base for mutable projections requiring concurrency control
+
+    # ── Media Reference ─────────────────────────────────────────────────
+    MediaRef:
+      type: object
+      required: [id, url, altText]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        url:
+          type: string
+          format: uri
+          description: CDN URL for the media asset
+        altText:
+          type: string
+          description: Alt text for accessibility
+        width:
+          type: integer
+          description: Image width in pixels
+        height:
+          type: integer
+          description: Image height in pixels
+      description: Immutable reference to a media asset
+
+    # ── Price Range ─────────────────────────────────────────────────────
+    PriceRange:
+      type: object
+      required: [min, max, currency]
+      properties:
+        min:
+          type: integer
+          minimum: 0
+          description: Minimum price across variants (integer VND)
+        max:
+          type: integer
+          minimum: 0
+          description: Maximum price across variants (integer VND)
+        currency:
+          type: string
+          enum: [VND]
+      description: Price range derived from product variants
+
+    # ── Product Schemas ─────────────────────────────────────────────────
+    ProductSummary:
+      type: object
+      required: [id, name, slug, excerpt, coverMedia, priceRange]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        name:
+          type: string
+          description: Product display name
+        slug:
+          type: string
+          description: URL slug (current canonical)
+        excerpt:
+          type: string
+          description: Short description excerpt
+        coverMedia:
+          $ref: "#/components/schemas/MediaRef"
+        priceRange:
+          $ref: "#/components/schemas/PriceRange"
+      description: Product summary for list views (never includes stock)
+
+    Variant:
+      type: object
+      required: [id, size, color, skuCode, priceVnd, availability]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        size:
+          type: string
+          description: Size label (e.g. S, M, L, XL)
+        color:
+          type: string
+          description: Color label
+        skuCode:
+          type: string
+          description: Unique SKU code derived from product + size + color
+        priceVnd:
+          type: integer
+          minimum: 0
+          description: Price in integer VND — variant-level, never overridden at product level
+        availability:
+          type: string
+          enum: [in_stock, low_stock, out_of_stock]
+          description: Current availability (cart is optimistic — never pre-reserves)
+      description: |
+        Purchasable size-color combination. Price is always at variant level.
+        Availability is informational — stock is reserved at checkout, not cart.
+
+    ComplianceInfo:
+      type: object
+      properties:
+        careInstructions:
+          type: array
+          items:
+            type: string
+        materialComposition:
+          type: string
+        countryOfOrigin:
+          type: string
+      description: Compliance and care information
+
+    OriginInfo:
+      type: object
+      properties:
+        manufacturer:
+          type: string
+        countryOfOrigin:
+          type: string
+        importDate:
+          $ref: "#/components/schemas/Timestamp"
+      description: Product origin and sourcing information
+
+    ProductDetail:
+      type: object
+      required: [id, name, slug, description, variants, complianceInfo, media]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          description: Full product description (may contain HTML)
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Variant"
+          description: All purchasable variants (size × color combinations)
+        complianceInfo:
+          $ref: "#/components/schemas/ComplianceInfo"
+        originInfo:
+          $ref: "#/components/schemas/OriginInfo"
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaRef"
+          description: All finalized media assets for this product
+        priceRange:
+          $ref: "#/components/schemas/PriceRange"
+      description: Full product detail with all variants and compliance info
+
+    # ── Post Schemas ────────────────────────────────────────────────────
+    PostSummary:
+      type: object
+      required: [id, title, slug, excerpt, coverMedia, publishedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        title:
+          type: string
+        slug:
+          type: string
+        excerpt:
+          type: string
+          description: Short excerpt for preview
+        coverMedia:
+          $ref: "#/components/schemas/MediaRef"
+        publishedAt:
+          $ref: "#/components/schemas/Timestamp"
+      description: Post summary for list views
+
+    PostDetail:
+      type: object
+      required: [id, title, slug, excerpt, body, coverMedia, publishedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        title:
+          type: string
+        slug:
+          type: string
+        excerpt:
+          type: string
+        body:
+          type: string
+          description: Full post body (may contain HTML/RichText)
+        coverMedia:
+          $ref: "#/components/schemas/MediaRef"
+        attachedMedia:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaRef"
+          description: Media attached to this post
+        publishedAt:
+          $ref: "#/components/schemas/Timestamp"
+      description: Full post detail with body and attached media
+
+    # ── Slug Resolution ─────────────────────────────────────────────────
+    SlugResolution:
+      type: object
+      required: [type, id, slug]
+      properties:
+        type:
+          type: string
+          enum: [product, post]
+        id:
+          $ref: "#/components/schemas/UUID"
+        slug:
+          type: string
+          description: Current canonical slug
+      description: Resolved slug → resource mapping
+
+    # ── Auth Schemas ────────────────────────────────────────────────────
+    EmailOtpChallengeRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Email address to send OTP to
+      description: |
+        Request an OTP challenge. Response is always the same shape
+        regardless of whether an account exists (non-enumerating).
+
+    EmailOtpVerificationRequest:
+      type: object
+      required: [email, code]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          description: OTP code received via email
+      description: Verify an OTP code for the given email
+
+    AuthVerificationResponse:
+      type: object
+      required: [session, serverTime]
+      properties:
+        session:
+          type: object
+          required: [userId, role, expiresAt]
+          properties:
+            userId:
+              $ref: "#/components/schemas/UUID"
+            role:
+              type: string
+              enum: [customer, staff]
+            permissions:
+              type: array
+              items:
+                $ref: "#/components/schemas/PermissionId"
+            expiresAt:
+              $ref: "#/components/schemas/Timestamp"
+        serverTime:
+          $ref: "#/components/schemas/Timestamp"
+      description: Successful authentication response with session info
+
+    # ── Cart Schemas ────────────────────────────────────────────────────
+    CartItemInput:
+      type: object
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 0
+          description: Desired quantity (0 removes item)
+      description: |
+        Cart item input. Quantity 0 removes the item.
+        Stock is NOT reserved until checkout — cart is optimistic.
+
+    CartItem:
+      type: object
+      required: [variantId, quantity, variant]
+      properties:
+        variantId:
+          $ref: "#/components/schemas/UUID"
+        quantity:
+          type: integer
+          minimum: 1
+        variant:
+          $ref: "#/components/schemas/Variant"
+      description: Cart line item with snapshot of variant at time of addition
+
+    Cart:
+      type: object
+      required: [items, updatedAt]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItem"
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+      description: |
+        Customer cart. Never represents stock as reserved.
+        Items reference snapshot of variant — price/availability re-evaluated at checkout.
+
+    # ── Checkout Schemas ────────────────────────────────────────────────
+    Quote:
+      type: object
+      required: [quoteId, expiresAt, serverTime, itemSubtotal, shipping, discount, tax, grandTotal, currency]
+      properties:
+        quoteId:
+          $ref: "#/components/schemas/UUID"
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+        serverTime:
+          $ref: "#/components/schemas/Timestamp"
+        itemSubtotal:
+          type: integer
+          minimum: 0
+          description: Sum of (variant.priceVnd * quantity) for all items (integer VND)
+        shipping:
+          type: integer
+          minimum: 0
+          description: |
+            Shipping fee (integer VND).
+            Rule: 30,000 VND when itemSubtotal < 500,000 VND; 0 otherwise.
+        discount:
+          type: integer
+          minimum: 0
+          description: Total discount amount (integer VND)
+        tax:
+          type: integer
+          minimum: 0
+          description: Tax amount (integer VND)
+        grandTotal:
+          type: integer
+          minimum: 0
+          description: |
+            grand_total = item_subtotal + shipping - discount + tax
+        currency:
+          type: string
+          enum: [VND]
+      description: |
+        Time-bounded quote. Does not expose reservation ID or imply held stock.
+        Stock reservation happens at order placement.
+
+    AddressInput:
+      type: object
+      required: [recipientName, recipientEmail, recipientPhone, provinceCity, wardCommune]
+      properties:
+        recipientName:
+          type: string
+        recipientEmail:
+          type: string
+          format: email
+        recipientPhone:
+          type: string
+        provinceCity:
+          type: string
+          description: Province or city name
+        district:
+          type: string
+          description: District name (NOT required in MVP)
+        wardCommune:
+          type: string
+          description: Ward or commune name
+        streetAddress:
+          type: string
+          description: Street address (optional for MVP)
+      description: Shipping address — district is optional per spec
+
+    PlaceOrderRequest:
+      type: object
+      required: [quoteId, shippingAddress]
+      properties:
+        quoteId:
+          $ref: "#/components/schemas/UUID"
+        shippingAddress:
+          $ref: "#/components/schemas/AddressInput"
+        note:
+          type: string
+          description: Optional order note from customer
+      description: Order placement request (must be idempotent)
+
+    InventoryReservation:
+      type: object
+      required: [id, expiresAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+      description: |
+        Temporary inventory reservation. Expires if payment not completed.
+        Separate from payment — payment retry does not require new reservation unless expired.
+
+    PlaceOrderResult:
+      type: object
+      required: [order, paymentAttempt]
+      properties:
+        order:
+          $ref: "#/components/schemas/OrderDetail"
+        paymentAttempt:
+          $ref: "#/components/schemas/PaymentAttempt"
+        reservation:
+          $ref: "#/components/schemas/InventoryReservation"
+        checkoutSession:
+          type: object
+          description: Checkout continuation session for retry/continue flows
+          properties:
+            continueUrl:
+              type: string
+              format: uri
+            expiresAt:
+              $ref: "#/components/schemas/Timestamp"
+      description: Order placement result with payment attempt and optional reservation
+
+    # ── Order Schemas ───────────────────────────────────────────────────
+    OrderStatus:
+      type: string
+      enum: [pending, confirmed, processing, shipped, delivered, cancelled, failed_delivery]
+      description: Order lifecycle status
+
+    PaymentStatus:
+      type: string
+      enum: [pending, processing, settled, failed, refund_required, refunded]
+      description: Payment lifecycle status
+
+    FulfillmentStatus:
+      type: string
+      enum: [unfulfilled, partial, fulfilled]
+      description: Fulfillment lifecycle status
+
+    OrderSummary:
+      type: object
+      required: [id, orderNumber, status, grandTotal, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        orderNumber:
+          type: string
+          description: Human-readable order number
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        grandTotal:
+          type: integer
+          minimum: 0
+          description: Grand total in integer VND
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+      description: Order summary for list views
+
+    OrderLineItem:
+      type: object
+      required: [variantId, quantity, unitPrice, total]
+      properties:
+        variantId:
+          $ref: "#/components/schemas/UUID"
+        quantity:
+          type: integer
+        unitPrice:
+          type: integer
+          minimum: 0
+          description: Unit price at order time (immutable snapshot)
+        total:
+          type: integer
+          minimum: 0
+          description: unitPrice * quantity
+        variantName:
+          type: string
+        skuCode:
+          type: string
+      description: Immutable snapshot of order line item at placement time
+
+    OrderDetail:
+      type: object
+      required: [id, orderNumber, status, items, grandTotal, shippingAddress, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        orderNumber:
+          type: string
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderLineItem"
+        itemSubtotal:
+          type: integer
+          minimum: 0
+        shipping:
+          type: integer
+          minimum: 0
+        discount:
+          type: integer
+          minimum: 0
+        tax:
+          type: integer
+          minimum: 0
+        grandTotal:
+          type: integer
+          minimum: 0
+        shippingAddress:
+          $ref: "#/components/schemas/AddressInput"
+        paymentStatus:
+          $ref: "#/components/schemas/PaymentStatus"
+        fulfillmentStatus:
+          $ref: "#/components/schemas/FulfillmentStatus"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+      description: Full order detail with immutable item snapshots
+
+    # ── Payment Schemas ─────────────────────────────────────────────────
+    PaymentAttempt:
+      type: object
+      required: [id, orderId, status, amount, currency, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        orderId:
+          $ref: "#/components/schemas/UUID"
+        status:
+          $ref: "#/components/schemas/PaymentStatus"
+        amount:
+          type: integer
+          minimum: 0
+          description: Payment amount in integer VND
+        currency:
+          type: string
+          enum: [VND]
+        method:
+          type: string
+          enum: [vnpay]
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+      description: Payment attempt record
+
+    VnpayPaymentStartResponse:
+      type: object
+      required: [paymentUrl, attemptId, expiresAt]
+      properties:
+        paymentUrl:
+          type: string
+          format: uri
+          description: VNPAY hosted payment page URL
+        attemptId:
+          $ref: "#/components/schemas/UUID"
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+      description: VNPAY payment initiation response
+
+    OrderStatusProjection:
+      type: object
+      required: [aggregateVersion, serverTime, orderStatus, paymentStatus, fulfillmentStatus, permittedNextActions]
+      properties:
+        aggregateVersion:
+          type: integer
+          minimum: 1
+          description: Monotonic version for optimistic concurrency
+        serverTime:
+          $ref: "#/components/schemas/Timestamp"
+        orderStatus:
+          $ref: "#/components/schemas/OrderStatus"
+        paymentStatus:
+          $ref: "#/components/schemas/PaymentStatus"
+        fulfillmentStatus:
+          $ref: "#/components/schemas/FulfillmentStatus"
+        reservationExpiry:
+          $ref: "#/components/schemas/Timestamp"
+        refundSubstate:
+          type: string
+          enum: [none, pending, processing, completed, failed]
+          description: Sub-state for refund tracking
+        permittedNextActions:
+          type: array
+          items:
+            type: string
+          description: Actions the current actor is permitted to take
+      description: |
+        Combined order/payment/fulfillment status projection.
+        Includes permitted next actions for UI-driven workflows.
+
+    # ── Guest Order Schemas ─────────────────────────────────────────────
+    GuestOrderLookupResult:
+      type: object
+      required: [access, serverTime]
+      properties:
+        access:
+          type: object
+          properties:
+            orderId:
+              $ref: "#/components/schemas/UUID"
+            accessExpiresAt:
+              $ref: "#/components/schemas/Timestamp"
+        serverTime:
+          $ref: "#/components/schemas/Timestamp"
+      description: Guest lookup result with temporary order access
+
+    OrderClaimRedemptionRequest:
+      type: object
+      required: [email, code, orderId]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          description: OTP code from claim challenge
+        orderId:
+          $ref: "#/components/schemas/UUID"
+      description: Request to claim a guest order into customer account
+
+    # ── Admin Product Schemas ───────────────────────────────────────────
+    ProductStatus:
+      type: string
+      enum: [draft, published, archived]
+
+    AdminProductSummary:
+      type: object
+      required: [id, name, slug, status, variantCount, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        name:
+          type: string
+        slug:
+          type: string
+        status:
+          $ref: "#/components/schemas/ProductStatus"
+        variantCount:
+          type: integer
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    AdminProductCreateRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        excerpt:
+          type: string
+        description:
+          type: string
+
+    AdminProductUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        excerpt:
+          type: string
+        description:
+          type: string
+
+    AdminProductDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminProductSummary"
+        - type: object
+          properties:
+            description:
+              type: string
+            complianceInfo:
+              $ref: "#/components/schemas/ComplianceInfo"
+            originInfo:
+              $ref: "#/components/schemas/OriginInfo"
+            aggregateVersion:
+              type: integer
+            serverTime:
+              $ref: "#/components/schemas/Timestamp"
+
+    AdminVariant:
+      allOf:
+        - $ref: "#/components/schemas/Variant"
+        - type: object
+          required: [stockQuantity, status]
+          properties:
+            stockQuantity:
+              type: integer
+              minimum: 0
+            status:
+              type: string
+              enum: [active, archived]
+
+    AdminVariantCreateRequest:
+      type: object
+      required: [size, color, priceVnd]
+      properties:
+        size:
+          type: string
+        color:
+          type: string
+        priceVnd:
+          type: integer
+          minimum: 0
+        stockQuantity:
+          type: integer
+          minimum: 0
+          default: 0
+
+    AdminVariantUpdateRequest:
+      type: object
+      properties:
+        priceVnd:
+          type: integer
+          minimum: 0
+        stockQuantity:
+          type: integer
+          minimum: 0
+
+    AdminStockAdjustRequest:
+      type: object
+      required: [delta]
+      properties:
+        delta:
+          type: integer
+          description: Positive to add, negative to remove stock
+        reason:
+          type: string
+
+    # ── Admin Post Schemas ──────────────────────────────────────────────
+    PostStatus:
+      type: string
+      enum: [draft, published, archived]
+
+    AdminPostSummary:
+      type: object
+      required: [id, title, slug, status, publishedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        title:
+          type: string
+        slug:
+          type: string
+        status:
+          $ref: "#/components/schemas/PostStatus"
+        publishedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    AdminPostCreateRequest:
+      type: object
+      required: [title, slug]
+      properties:
+        title:
+          type: string
+        slug:
+          type: string
+        excerpt:
+          type: string
+        body:
+          type: string
+
+    AdminPostUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        slug:
+          type: string
+        excerpt:
+          type: string
+        body:
+          type: string
+
+    AdminPostDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminPostSummary"
+        - type: object
+          properties:
+            excerpt:
+              type: string
+            body:
+              type: string
+            aggregateVersion:
+              type: integer
+            serverTime:
+              $ref: "#/components/schemas/Timestamp"
+
+    # ── Admin Media Schemas ─────────────────────────────────────────────
+    MediaUploadAuthorizationRequest:
+      type: object
+      required: [filename, contentType, sizeBytes]
+      properties:
+        filename:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 1
+
+    MediaUploadAuthorization:
+      type: object
+      required: [uploadId, uploadUrl, expiresAt]
+      properties:
+        uploadId:
+          $ref: "#/components/schemas/UUID"
+        uploadUrl:
+          type: string
+          format: uri
+          description: Pre-signed URL for direct CDN upload
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    MediaFinalizeRequest:
+      type: object
+      required: [uploadId]
+      properties:
+        uploadId:
+          $ref: "#/components/schemas/UUID"
+        altText:
+          type: string
+
+    MediaAsset:
+      type: object
+      required: [id, url, status, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        url:
+          type: string
+          format: uri
+        altText:
+          type: string
+        status:
+          type: string
+          enum: [pending, finalized, orphaned]
+        attachedTo:
+          type: array
+          items:
+            type: object
+            properties:
+              resourceType:
+                type: string
+                enum: [product, post]
+              resourceId:
+                $ref: "#/components/schemas/UUID"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    MediaAttachRequest:
+      type: object
+      required: [resourceType, resourceId]
+      properties:
+        resourceType:
+          type: string
+          enum: [product, post]
+        resourceId:
+          $ref: "#/components/schemas/UUID"
+
+    MediaDetachRequest:
+      type: object
+      required: [resourceType, resourceId]
+      properties:
+        resourceType:
+          type: string
+          enum: [product, post]
+        resourceId:
+          $ref: "#/components/schemas/UUID"
+
+    # ── Admin Order Schemas ─────────────────────────────────────────────
+    AdminOrderSummary:
+      allOf:
+        - $ref: "#/components/schemas/OrderSummary"
+        - type: object
+          properties:
+            recipientName:
+              type: string
+              description: PII — visibility depends on role
+            recipientEmail:
+              type: string
+              description: PII — visibility depends on role
+            paymentStatus:
+              $ref: "#/components/schemas/PaymentStatus"
+
+    AdminOrderDetail:
+      allOf:
+        - $ref: "#/components/schemas/OrderDetail"
+        - type: object
+          properties:
+            aggregateVersion:
+              type: integer
+            serverTime:
+              $ref: "#/components/schemas/Timestamp"
+            auditLog:
+              type: array
+              items:
+                $ref: "#/components/schemas/AuditEntry"
+
+    AdminOrderTransitionRequest:
+      type: object
+      required: [targetStatus]
+      properties:
+        targetStatus:
+          $ref: "#/components/schemas/OrderStatus"
+        reason:
+          type: string
+        fulfillmentInfo:
+          type: object
+          properties:
+            trackingNumber:
+              type: string
+            carrier:
+              type: string
+
+    # ── Admin Refund Schemas ────────────────────────────────────────────
+    AdminRefundRequest:
+      type: object
+      required: [amount, reason]
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          description: Refund amount in integer VND (can be partial)
+        reason:
+          type: string
+
+    AdminRefundResult:
+      type: object
+      required: [attemptId, refundStatus, refundAmount]
+      properties:
+        attemptId:
+          $ref: "#/components/schemas/UUID"
+        refundStatus:
+          type: string
+          enum: [none, pending, processing, completed, failed]
+        refundAmount:
+          type: integer
+          minimum: 0
+        gatewayRef:
+          type: string
+          description: Gateway reference ID for reconciliation
+        updatedAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ── Admin Staff Schemas ─────────────────────────────────────────────
+    StaffAccount:
+      type: object
+      required: [id, email, status, role, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/UUID"
+        email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [active, disabled]
+        role:
+          type: string
+          enum: [owner_admin, catalog_editor, order_operator]
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PermissionId"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    AdminStaffCreateRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [owner_admin, catalog_editor, order_operator]
+
+    RoleAssignment:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [owner_admin, catalog_editor, order_operator]
+
+    ShippingConfigRead:
+      type: object
+      required: [freeShippingThreshold, baseShippingFee, currency]
+      properties:
+        freeShippingThreshold:
+          type: integer
+          minimum: 0
+          description: Merchandise subtotal threshold for free shipping (integer VND)
+        baseShippingFee:
+          type: integer
+          minimum: 0
+          description: Base shipping fee below threshold (integer VND)
+        currency:
+          type: string
+          enum: [VND]
+
+    AuditEntry:
+      type: object
+      required: [timestamp, actor, action]
+      properties:
+        timestamp:
+          $ref: "#/components/schemas/Timestamp"
+        actor:
+          type: object
+          properties:
+            id:
+              $ref: "#/components/schemas/UUID"
+            type:
+              type: string
+              enum: [customer, staff, system]
+        action:
+          type: string
+          description: Human-readable action description
+        metadata:
+          type: object
+          additionalProperties: true
+
+    # ── Domain Events ───────────────────────────────────────────────────
+    DomainEventEnvelope:
+      type: object
+      required: [eventId, eventType, aggregateId, aggregateType, orderingKey, occurredAt, correlationId]
+      properties:
+        eventId:
+          $ref: "#/components/schemas/UUID"
+        eventType:
+          type: string
+          description: Semantic versioned event type (e.g. order.placed.v1)
+        aggregateId:
+          $ref: "#/components/schemas/UUID"
+        aggregateType:
+          type: string
+          enum: [product, post, variant, order, payment, media, identity]
+        orderingKey:
+          type: string
+          description: Monotonic ordering key for consumer sequencing
+        occurredAt:
+          $ref: "#/components/schemas/Timestamp"
+        correlationId:
+          $ref: "#/components/schemas/UUID"
+        payload:
+          type: object
+          additionalProperties: true
+          description: Event-specific payload (never contains raw challenge material)
+      description: |
+        Domain event envelope. All 17 event types use this envelope.
+        Payload is event-specific — see individual event payload schemas.
+        No raw challenge material (OTP codes, tokens) appears in any payload.
+
+    # Event types (for reference — actual events use DomainEventEnvelope with specific payloads):
+    # Catalog: product.created.v1, product.published.v1, product.archived.v1,
+    #          post.created.v1, post.published.v1, post.archived.v1
+    # Inventory: inventory.adjusted.v1
+    # Order: order.placed.v1, order.confirmed.v1, order.processing.v1,
+    #        order.shipped.v1, order.delivered.v1, order.cancelled.v1,
+    #        order.failed_delivery.v1
+    # Payment: payment.attempt_created.v1, payment.settled.v1,
+    #          payment.refund_required.v1, payment.refunded.v1
+    # Media: media.upload_finalized.v1, media.orphan_cleaned.v1
+    # Identity: identity.challenge_created.v1, identity.challenge_consumed.v1
+
+    # ── Health ────────────────────────────────────────────────────────────
+    HealthResponse:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        timestamp:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ── Challenge ─────────────────────────────────────────────────────────
+    ChallengeAccepted:
+      type: object
+      required: [expiresAt, resendAfter, serverTime]
+      properties:
+        expiresAt:
+          $ref: "#/components/schemas/Timestamp"
+        resendAfter:
+          $ref: "#/components/schemas/Timestamp"
+        serverTime:
+          $ref: "#/components/schemas/Timestamp"
+      description: |
+        Non-enumerating challenge response. Always returns this shape
+        regardless of whether an account/order exists.
+
+    # ── Permission IDs ────────────────────────────────────────────────────
+    PermissionId:
+      type: string
+      description: |
+        Stable permission identifier from authorization matrix.
+        Every protected operation references exactly one permission ID.
+        Deny-by-default: missing permission = no access.
+      enum:
+        - public
+        - public.catalog.read
+        - cart.self.manage
+        - checkout.self.place
+        - checkout.status.read
+        - payment.self.retry
+        - order.guest.read
+        - order.self.read
+        - order.self.claim
+        - catalog.manage
+        - content.manage
+        - media.manage
+        - order.ops.read
+        - order.ops.transition
+        - payment.refund
+        - staff.manage
+        - config.read
+
+  # ── Shared Responses ──────────────────────────────────────────────────────
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Forbidden:
+      description: Insufficient permissions (deny-by-default)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Conflict:
+      description: Optimistic concurrency conflict (aggregateVersion mismatch)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    IdempotencyMismatch:
+      description: Idempotency key payload mismatch
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
