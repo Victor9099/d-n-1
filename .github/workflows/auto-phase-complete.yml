@@ -1,0 +1,234 @@
+name: Auto Phase Complete
+
+on:
+  issues:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'Phase number to check (0, 1, 2)'
+        required: true
+        type: string
+
+jobs:
+  check-phase-completion:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issues' || github.event.inputs.phase != ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Detect completed phase
+        id: detect
+        run: |
+          # Get phase from input or detect from issue
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            PHASE="${{ github.event.inputs.phase }}"
+          else
+            # Extract phase from issue labels
+            PHASE=$(echo '${{ toJSON(github.event.issue.labels) }}' | jq -r '.[] | select(.name | startswith("phase-")) | .name' | head -1 | sed 's/phase-//')
+          fi
+
+          echo "Checking Phase $PHASE completion..."
+
+          # Count total and closed issues for this phase
+          TOTAL_ISSUES=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues?labels=phase-$PHASE&state=all" \
+            | jq 'length')
+
+          CLOSED_ISSUES=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues?labels=phase-$PHASE&state=closed" \
+            | jq 'length')
+
+          echo "Phase $PHASE: $CLOSED_ISSUES/$TOTAL_ISSUES tasks completed"
+
+          if [ "$CLOSED_ISSUES" -eq "$TOTAL_ISSUES" ] && [ "$TOTAL_ISSUES" -gt 0 ]; then
+            echo "phase_complete=true" >> $GITHUB_OUTPUT
+            echo "phase=$PHASE" >> $GITHUB_OUTPUT
+            echo "✅ Phase $PHASE is complete!"
+          else
+            echo "phase_complete=false" >> $GITHUB_OUTPUT
+            echo "⏳ Phase $PHASE not yet complete"
+          fi
+
+      - name: Run validation suite
+        if: steps.detect.outputs.phase_complete == 'true'
+        run: |
+          echo "🔍 Running validation for Phase ${{ steps.detect.outputs.phase }}..."
+
+          # Type check
+          echo "📝 Running typecheck..."
+          bun run typecheck || exit 1
+
+          # Linting
+          echo "🎨 Running linter..."
+          bun run lint || exit 1
+
+          # Tests
+          echo "🧪 Running tests..."
+          bun run test || exit 1
+
+          # UBS scan
+          echo "🔬 Running UBS scan..."
+          ubs . --ci || exit 1
+
+          # Build check
+          echo "🏗️ Running build..."
+          bun run build || exit 1
+
+          echo "✅ All validations passed!"
+
+      - name: Generate phase summary
+        if: steps.detect.outputs.phase_complete == 'true'
+        id: summary
+        run: |
+          PHASE=${{ steps.detect.outputs.phase }}
+
+          # Get closed issues for this phase
+          ISSUES_JSON=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues?labels=phase-$PHASE&state=closed")
+
+          # Generate markdown summary
+          cat > phase-summary.md << EOF
+          # 🎉 Phase $PHASE Complete
+
+          **All tasks completed successfully!**
+
+          ## Summary
+          - **Total Tasks**: $(echo "$ISSUES_JSON" | jq 'length')
+          - **Completed**: $(echo "$ISSUES_JSON" | jq '[.[] | select(.state == "closed")] | length')
+          - **Validation**: ✅ All checks passed
+
+          ## Completed Tasks
+
+          EOF
+
+          echo "$ISSUES_JSON" | jq -r '.[] | "- [x] **\(.title)** - \(.body | split("\n")[0])"' >> phase-summary.md
+
+          cat >> phase-summary.md << EOF
+
+          ## Next Steps
+
+          1. Review the changes in this PR
+          2. Verify all tests pass
+          3. Check deployment readiness
+          4. Merge to main branch
+
+          ---
+          🤖 Generated automatically by CI/CD pipeline
+          EOF
+
+          echo "summary_file=phase-summary.md" >> $GITHUB_OUTPUT
+
+      - name: Create auto-complete branch
+        if: steps.detect.outputs.phase_complete == 'true'
+        id: create-branch
+        run: |
+          PHASE=${{ steps.detect.outputs.phase }}
+          BRANCH_NAME="auto/phase-$PHASE-complete"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create new branch
+          git checkout -b "$BRANCH_NAME"
+
+          # Add phase summary
+          cp phase-summary.md .
+          git add phase-summary.md
+
+          # Commit
+          git commit -m "feat: auto-complete Phase $PHASE
+
+          All Phase $PHASE tasks completed successfully.
+
+          🤖 Automated by CI/CD pipeline
+          Co-Authored-By: Claude <noreply@anthropic.com>"
+
+          # Push branch
+          git push origin "$BRANCH_NAME"
+
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request
+        if: steps.detect.outputs.phase_complete == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PHASE=${{ steps.detect.outputs.phase }}
+          BRANCH_NAME=${{ steps.create-branch.outputs.branch_name }}
+
+          # Create PR
+          gh pr create \
+            --title "🎉 Auto: Phase $PHASE Complete" \
+            --body-file phase-summary.md \
+            --head "$BRANCH_NAME" \
+            --base main \
+            --label "auto-generated,phase-complete,ready-for-review"
+
+          echo "✅ PR created successfully!"
+
+      - name: Notify completion
+        if: steps.detect.outputs.phase_complete == 'true'
+        run: |
+          PHASE=${{ steps.detect.outputs.phase }}
+
+          # Create notification file
+          cat > notification.txt << EOF
+          🎉 Phase $PHASE Complete!
+
+          All tasks have been completed and validated.
+          A PR has been created for your review.
+
+          Next phase (Phase $((PHASE + 1))) is now unblocked.
+          EOF
+
+          cat notification.txt
+          echo "::notice::Phase $PHASE complete! PR created for review."
+
+  local-sync:
+    runs-on: ubuntu-latest
+    needs: check-phase-completion
+    if: needs.check-phase-completion.outputs.phase_complete == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Sync beads status
+        run: |
+          echo "🔄 Syncing beads status..."
+
+          # Install beads if not present
+          if ! command -v br &> /dev/null; then
+            curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/install.sh | bash
+          fi
+
+          # Export current status
+          if [ -d ".beads" ]; then
+            python3 scripts/export-beads-to-jsonl.py || echo "Export script not found, skipping..."
+          fi
+
+          echo "✅ Beads status synced"
+
+      - name: Update Cass Memory
+        run: |
+          echo "📚 Updating Cass Memory..."
+
+          # Add completion lesson
+          if command -v cm &> /dev/null; then
+            cm playbook add "Phase ${{ needs.check-phase-completion.outputs.phase }} completed via automated CI/CD pipeline" || true
+          fi
+
+          echo "✅ Cass Memory updated"

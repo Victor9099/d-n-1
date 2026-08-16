@@ -2,6 +2,48 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## 📚 Project Memory
+
+**IMPORTANT:** Before starting any work, read `docs/project-memory.md` for:
+- Project context (Êm Clothing Commerce Platform)
+- Tech stack and architecture
+- Domain model and business rules
+- Completed phases and lessons learned
+- Workflow patterns (beads, CI/CD, etc.)
+
+### Recording Lessons
+
+**Project-specific lessons** → Use `./scripts/cm-repo.sh`:
+```bash
+# Add lesson to repo scope (tracked in .cass/playbook.yaml)
+./scripts/cm-repo.sh add "Lesson content" [category]
+
+# List all repo lessons
+./scripts/cm-repo.sh list
+
+# Search lessons
+./scripts/cm-repo.sh search "keyword"
+```
+
+**Examples:**
+```bash
+./scripts/cm-repo.sh add "OpenAPI validation required before codegen" architecture
+./scripts/cm-repo.sh add "Use cursor pagination, not offset" api-design
+./scripts/cm-repo.sh add "Migration safety: expand/backfill/contract" database
+```
+
+**DO NOT use `cm playbook add`** (it writes to global scope, not project-specific).
+
+### Memory Locations
+
+| Storage | Location | Scope | Usage |
+|---------|----------|-------|-------|
+| **Project Memory** | `docs/project-memory.md` | Project | Major context, architecture, phases |
+| **Repo Lessons** | `.cass/playbook.yaml` | Project | Specific lessons, patterns (via cm-repo.sh) |
+| **Global Lessons** | `~/.cass-memory` | Global | Universal lessons only (rarely used) |
+
+This file contains **project-specific knowledge**. For universal lessons only, use Cass Memory (`cm`).
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
 
