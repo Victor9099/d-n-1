@@ -29,6 +29,26 @@
     "codegen": {
       "dependsOn": [],
       "outputs": ["contracts/generated/**"]
+    },
+    "db:generate": {
+      "dependsOn": [],
+      "outputs": ["node_modules/.prisma/**"]
+    },
+    "db:migrate:dev": {
+      "dependsOn": [],
+      "cache": false
+    },
+    "db:migrate:deploy": {
+      "dependsOn": [],
+      "cache": false
+    },
+    "db:validate": {
+      "dependsOn": [],
+      "outputs": []
+    },
+    "db:seed": {
+      "dependsOn": ["db:migrate:deploy"],
+      "cache": false
     }
   }
 }

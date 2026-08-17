@@ -1,0 +1,151 @@
+# ============================================================================
+# ÊM Clothing Commerce Platform — Docker Compose
+# ============================================================================
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose up postgres    # Start only database
+#   docker compose logs -f        # Follow logs
+#   docker compose down -v        # Stop and remove volumes
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # PostgreSQL — Primary database
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: em-postgres
+    restart: unless-stopped
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-em}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-em_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-em_dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-em} -d ${POSTGRES_DB:-em_dev}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # Mailpit — Local email capture (development)
+  # --------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: em-mailpit
+    restart: unless-stopped
+    ports:
+      - '${MAILPIT_SMTP_PORT:-1025}:1025' # SMTP
+      - '${MAILPIT_UI_PORT:-8025}:8025' # Web UI
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_DATA_FILE: /data/mailpit.db
+    volumes:
+      - mailpit_data:/data
+
+  # --------------------------------------------------------------------------
+  # VNPAY Callback Simulator — Mock payment gateway
+  # --------------------------------------------------------------------------
+  vnpay-simulator:
+    build:
+      context: ./tools/vnpay-simulator
+      dockerfile: Dockerfile
+    container_name: em-vnpay-sim
+    restart: unless-stopped
+    ports:
+      - '${VNPAY_SIM_PORT:-9090}:9090'
+    environment:
+      PORT: 9090
+      VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-TEST01}
+      VNPAY_HASH_SECRET: ${VNPAY_HASH_SECRET:-test-secret}
+      CALLBACK_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}/api/payments/vnpay/callback
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:9090/health']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # --------------------------------------------------------------------------
+  # API Server
+  # --------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: em-api
+    restart: unless-stopped
+    ports:
+      - '${API_PORT:-3001}:3001'
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-em}:${POSTGRES_PASSWORD:-em_dev}@postgres:5432/${POSTGRES_DB:-em_dev}
+      PORT: 3001
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      VNPAY_CALLBACK_URL: http://vnpay-simulator:9090
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:3001/health']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # Storefront
+  # --------------------------------------------------------------------------
+  storefront:
+    build:
+      context: .
+      dockerfile: apps/storefront/Dockerfile
+    container_name: em-storefront
+    restart: unless-stopped
+    ports:
+      - '${STOREFRONT_PORT:-3000}:3000'
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:3000']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # Admin Dashboard
+  # --------------------------------------------------------------------------
+  admin:
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile
+    container_name: em-admin
+    restart: unless-stopped
+    ports:
+      - '${ADMIN_PORT:-3002}:3002'
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_APP_URL: http://localhost:3002
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:3002']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  mailpit_data:

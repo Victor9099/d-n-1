@@ -1,0 +1,605 @@
+// ============================================================================
+// ÊM Clothing Commerce Platform — Prisma Schema
+// ============================================================================
+// Single source of truth for database structure.
+// All IDs: UUID (opaque). All money: Integer VND. Timestamps: UTC ISO-8601.
+// Architecture: expand/backfill/contract for migrations.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+  customer
+  staff
+}
+
+enum StaffRole {
+  owner_admin
+  catalog_editor
+  order_operator
+}
+
+enum StaffStatus {
+  active
+  disabled
+}
+
+enum ChallengeType {
+  email_otp
+  order_claim
+  guest_tracking
+}
+
+enum ChallengeScope {
+  customer_auth
+  staff_auth
+  guest_order_lookup
+  order_claim
+}
+
+enum ProductStatus {
+  draft
+  published
+  archived
+}
+
+enum VariantStatus {
+  active
+  archived
+}
+
+enum PostStatus {
+  draft
+  published
+  archived
+}
+
+enum MediaStatus {
+  pending
+  finalized
+  orphaned
+}
+
+enum ResourceType {
+  product
+  post
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  processing
+  shipped
+  delivered
+  cancelled
+  failed_delivery
+}
+
+enum PaymentStatus {
+  pending
+  processing
+  settled
+  failed
+  refund_required
+  refunded
+}
+
+enum PaymentMethod {
+  vnpay
+  cod
+}
+
+enum FulfillmentStatus {
+  unfulfilled
+  partial
+  fulfilled
+}
+
+enum RefundStatus {
+  none
+  pending
+  processing
+  completed
+  failed
+}
+
+enum ActorType {
+  customer
+  staff
+  system
+}
+
+enum AggregateType {
+  product
+  post
+  variant
+  order
+  payment
+  media
+  identity
+}
+
+enum Currency {
+  VND
+}
+
+// ============================================================================
+// IDENTITY MODULE
+// ============================================================================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  role      UserRole @default(customer)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  staffAccount StaffAccount?
+  sessions     Session[]
+  cartItems    CartItem[]
+  orders       Order[]
+
+  @@map("users")
+}
+
+model StaffAccount {
+  id        String      @id @default(uuid())
+  userId    String      @unique
+  status    StaffStatus @default(active)
+  role      StaffRole
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("staff_accounts")
+}
+
+model Session {
+  id         String   @id @default(uuid())
+  userId     String
+  role       UserRole
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model OtpChallenge {
+  id          String         @id @default(uuid())
+  type        ChallengeType
+  scope       ChallengeScope
+  email       String
+  codeHash    String
+  attempts    Int            @default(0)
+  maxAttempts Int            @default(5)
+  expiresAt   DateTime
+  resendAfter DateTime
+  verifiedAt  DateTime?
+  redeemedAt  DateTime?
+  orderId     String?
+  createdAt   DateTime       @default(now())
+
+  // Relations
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@index([email, type, scope])
+  @@index([expiresAt])
+  @@map("otp_challenges")
+}
+
+// ============================================================================
+// CATALOG & INVENTORY MODULE
+// ============================================================================
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  parentId  String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+model Product {
+  id          String        @id @default(uuid())
+  name        String
+  slug        String        @unique
+  excerpt     String        @default("")
+  description String        @default("")
+  status      ProductStatus @default(draft)
+  version     Int           @default(1)
+
+  // Compliance info
+  careInstructions    String[] @default([])
+  materialComposition String?
+  countryOfOrigin     String?
+
+  // Origin info
+  manufacturer String?
+  importDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  variants         Variant[]
+  categories       Category[]
+  mediaAttachments MediaAttachment[] @relation("ProductMedia")
+  slugRedirects    SlugRedirect[]    @relation("ProductRedirects")
+
+  @@index([status])
+  @@index([slug])
+  @@map("products")
+}
+
+model Variant {
+  id            String        @id @default(uuid())
+  productId     String
+  skuCode       String        @unique
+  size          String
+  color         String
+  priceVnd      Int           @default(0)
+  stockQuantity Int           @default(0)
+  reservedQty   Int           @default(0)
+  status        VariantStatus @default(active)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  product    Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems  CartItem[]
+  orderItems OrderLineItem[]
+
+  @@unique([productId, size, color])
+  @@index([productId])
+  @@index([skuCode])
+  @@map("variants")
+}
+
+// ============================================================================
+// CART & CHECKOUT MODULE
+// ============================================================================
+
+model CartItem {
+  id        String   @id @default(uuid())
+  userId    String?
+  sessionId String?
+  variantId String
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variant Variant @relation(fields: [variantId], references: [id])
+
+  @@unique([userId, variantId])
+  @@unique([sessionId, variantId])
+  @@index([userId])
+  @@index([sessionId])
+  @@map("cart_items")
+}
+
+model Quote {
+  id           String   @id @default(uuid())
+  userId       String?
+  sessionId    String?
+  itemSubtotal Int      @default(0)
+  shippingFee  Int      @default(0)
+  discount     Int      @default(0)
+  tax          Int      @default(0)
+  grandTotal   Int      @default(0)
+  currency     Currency @default(VND)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  // Relations
+  orders Order[]
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([expiresAt])
+  @@map("quotes")
+}
+
+model InventoryReservation {
+  id         String    @id @default(uuid())
+  orderId    String    @unique
+  expiresAt  DateTime
+  releasedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([expiresAt])
+  @@map("inventory_reservations")
+}
+
+// ============================================================================
+// ORDER & PAYMENT MODULE
+// ============================================================================
+
+model Order {
+  id          String  @id @default(uuid())
+  orderNumber String  @unique
+  userId      String?
+  sessionId   String?
+  quoteId     String?
+
+  // Status tracking
+  status            OrderStatus       @default(pending)
+  paymentStatus     PaymentStatus     @default(pending)
+  fulfillmentStatus FulfillmentStatus @default(unfulfilled)
+  refundStatus      RefundStatus      @default(none)
+  version           Int               @default(1)
+
+  // Financials (all Integer VND)
+  itemSubtotal Int      @default(0)
+  shippingFee  Int      @default(0)
+  discount     Int      @default(0)
+  tax          Int      @default(0)
+  grandTotal   Int      @default(0)
+  currency     Currency @default(VND)
+
+  // Shipping address (embedded as columns)
+  recipientName  String
+  recipientEmail String
+  recipientPhone String
+  provinceCity   String
+  district       String?
+  wardCommune    String
+  streetAddress  String?
+
+  // Notes
+  note String?
+
+  // Guest order access
+  guestAccessEmail String?
+  guestAccessToken String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user              User?                 @relation(fields: [userId], references: [id])
+  quote             Quote?                @relation(fields: [quoteId], references: [id])
+  items             OrderLineItem[]
+  payments          PaymentAttempt[]
+  reservation       InventoryReservation?
+  challenges        OtpChallenge[]
+  auditLogs         AuditLog[]
+  fulfillmentEvents FulfillmentEvent[]
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([status])
+  @@index([orderNumber])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+model OrderLineItem {
+  id        String @id @default(uuid())
+  orderId   String
+  variantId String
+  quantity  Int
+  unitPrice Int    @default(0)
+  total     Int    @default(0)
+
+  // Denormalized snapshot
+  variantName String?
+  skuCode     String?
+  size        String?
+  color       String?
+
+  // Relations
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant Variant @relation(fields: [variantId], references: [id])
+
+  @@index([orderId])
+  @@map("order_line_items")
+}
+
+model PaymentAttempt {
+  id             String        @id @default(uuid())
+  orderId        String
+  status         PaymentStatus @default(pending)
+  amount         Int           @default(0)
+  currency       Currency      @default(VND)
+  method         PaymentMethod @default(vnpay)
+  gatewayRef     String?
+  idempotencyKey String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([status])
+  @@index([idempotencyKey])
+  @@map("payment_attempts")
+}
+
+model FulfillmentEvent {
+  id             String            @id @default(uuid())
+  orderId        String
+  fromStatus     FulfillmentStatus
+  toStatus       FulfillmentStatus
+  trackingNumber String?
+  carrier        String?
+  reason         String?
+  createdAt      DateTime          @default(now())
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("fulfillment_events")
+}
+
+// ============================================================================
+// CONTENT & MEDIA MODULE
+// ============================================================================
+
+model Post {
+  id          String     @id @default(uuid())
+  title       String
+  slug        String     @unique
+  excerpt     String     @default("")
+  body        String     @default("")
+  status      PostStatus @default(draft)
+  publishedAt DateTime?
+  version     Int        @default(1)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // Relations
+  mediaAttachments MediaAttachment[] @relation("PostMedia")
+  slugRedirects    SlugRedirect[]    @relation("PostRedirects")
+
+  @@index([status])
+  @@index([publishedAt])
+  @@map("posts")
+}
+
+model MediaAsset {
+  id          String      @id @default(uuid())
+  url         String
+  altText     String      @default("")
+  status      MediaStatus @default(pending)
+  contentType String?
+  sizeBytes   Int?
+  width       Int?
+  height      Int?
+  uploadId    String?
+  expiresAt   DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  attachments MediaAttachment[]
+
+  @@index([status])
+  @@map("media_assets")
+}
+
+model MediaAttachment {
+  id           String       @id @default(uuid())
+  mediaAssetId String
+  resourceType ResourceType
+  productId    String? // Polymorphic: only one of productId/postId is set
+  postId       String?
+  sortOrder    Int          @default(0)
+  isCover      Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  // Relations
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  product    Product?   @relation("ProductMedia", fields: [productId], references: [id], onDelete: Cascade)
+  post       Post?      @relation("PostMedia", fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([mediaAssetId, resourceType, productId, postId])
+  @@index([resourceType, productId])
+  @@index([resourceType, postId])
+  @@map("media_attachments")
+}
+
+model SlugRedirect {
+  id           String       @id @default(uuid())
+  oldSlug      String       @unique
+  resourceType ResourceType
+  productId    String? // Polymorphic: only one of productId/postId is set
+  postId       String?
+  createdAt    DateTime     @default(now())
+
+  // Relations
+  product Product? @relation("ProductRedirects", fields: [productId], references: [id], onDelete: Cascade)
+  post    Post?    @relation("PostRedirects", fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([oldSlug])
+  @@map("slug_redirects")
+}
+
+// ============================================================================
+// INFRASTRUCTURE MODULE
+// ============================================================================
+
+model AuditLog {
+  id        String    @id @default(uuid())
+  orderId   String?
+  actorId   String?
+  actorType ActorType @default(system)
+  action    String
+  metadata  Json?
+  createdAt DateTime  @default(now())
+
+  // Relations
+  order Order? @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // actorId links to User, but we use a single column without FK constraint
+  // because actorType determines which role context applies
+
+  @@index([orderId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model DomainEvent {
+  id            String        @id @default(uuid())
+  eventId       String        @unique
+  eventType     String
+  aggregateId   String
+  aggregateType AggregateType
+  orderingKey   String        @unique
+  payload       Json
+  correlationId String
+  occurredAt    DateTime      @default(now())
+  processedAt   DateTime?
+  retries       Int           @default(0)
+
+  @@index([aggregateType, aggregateId])
+  @@index([orderingKey])
+  @@index([occurredAt])
+  @@map("domain_events")
+}
+
+model ShippingConfig {
+  id                    String   @id @default(uuid())
+  freeShippingThreshold Int      @default(500000)
+  baseShippingFee       Int      @default(30000)
+  currency              Currency @default(VND)
+  updatedAt             DateTime @updatedAt
+
+  @@map("shipping_config")
+}

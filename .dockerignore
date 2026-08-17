@@ -1,0 +1,17 @@
+node_modules
+.next
+dist
+.env
+.env.*
+.git
+.github
+.beads
+.cass
+_bmad
+_bmad-output
+*.md
+*.log
+.DS_Store
+coverage
+.vscode
+.idea

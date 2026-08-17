@@ -1,0 +1,167 @@
+# ============================================================================
+# CI Quality, Migration and Contract Gates — Phase 1 Pipeline
+# ============================================================================
+# Runs on: push to main, PRs to main
+# Validates: typecheck, lint, test, UBS scan, Prisma, contracts
+# ============================================================================
+
+name: CI Phase 1
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Quality Gates
+  # --------------------------------------------------------------------------
+  quality:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+
+      - name: TypeCheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test
+
+  # --------------------------------------------------------------------------
+  # UBS Bug Scanner
+  # --------------------------------------------------------------------------
+  ubs-scan:
+    name: UBS Static Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run UBS
+        uses: reviewdog/action-setup@v1
+      - run: |
+          curl -fsSL https://raw.githubusercontent.com/nightowlqa/ubs/main/install.sh | sh
+          ubs . --ci --fail-on-warning
+
+  # --------------------------------------------------------------------------
+  # Prisma Validation
+  # --------------------------------------------------------------------------
+  prisma:
+    name: Prisma Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: em
+          POSTGRES_PASSWORD: em_ci
+          POSTGRES_DB: em_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U em -d em_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://em:em_ci@localhost:5432/em_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+
+      - name: Validate Prisma Schema
+        run: bun run --filter @ecom/db db:validate
+
+      - name: Generate Prisma Client
+        run: bun run --filter @ecom/db db:generate
+
+      - name: Run Migrations
+        run: bun run --filter @ecom/db db:migrate:deploy
+
+      - name: Run Seed
+        run: bun run --filter @ecom/db db:seed
+        continue-on-error: true
+
+  # --------------------------------------------------------------------------
+  # Contract Compatibility (existing + enhanced)
+  # --------------------------------------------------------------------------
+  contracts:
+    name: Contract Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+
+      - name: Validate OpenAPI Syntax
+        run: bun run --filter @ecom/contracts validate
+
+      - name: Check Checksum
+        run: bun run --filter @ecom/contracts check:checksum
+
+      - name: Breaking Change Detection
+        run: bun run --filter @ecom/contracts check:breaking
+
+      - name: Generate & Compare Types
+        run: |
+          bun run --filter @ecom/contracts generate
+          git diff --exit-code contracts/generated/schema.ts || \
+            (echo "❌ Generated types are out of date. Run: bun run codegen" && exit 1)
+
+  # --------------------------------------------------------------------------
+  # Build Check
+  # --------------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [quality, prisma]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter @ecom/db db:generate
+      - run: bun run build
+
+  # --------------------------------------------------------------------------
+  # Docker Build Check
+  # --------------------------------------------------------------------------
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build]
+    if: github.event_name == 'pull_request'
+    strategy:
+      matrix:
+        app: [api, storefront, admin]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg APP_DIR=apps/${{ matrix.app }} \
+            -t em-${{ matrix.app }}:ci \
+            -f apps/${{ matrix.app }}/Dockerfile .

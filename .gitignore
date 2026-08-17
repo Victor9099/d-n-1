@@ -10,22 +10,6 @@ build/
 .turbo/
 *.tsbuildinfo
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment
-.env
-.env.local
-.env.*.local
-
 # Testing
 coverage/
 .nyc_output/
@@ -56,3 +40,45 @@ _bmad/
 .dolt/
 .beads-credential-key
 .beads/proxieddb/
+
+# Prisma
+packages/db/node_modules/.prisma/
+packages/db/**/*.db
+packages/db/**/*.db-journal
+
+# Docker volumes
+postgres_data/
+mailpit_data/
+
+# Environment (keep .env.example)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Tool configs
+.beads/
+.cass/
+.agents/
+.claude/
+
+# Generated contracts
+contracts/generated/
+
+# UBS reports
+.ubs-report.json
+
+# BMAD planning
+_bmad-output/
+_bmad/
