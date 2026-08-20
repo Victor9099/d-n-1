@@ -1,0 +1,60 @@
+{
+  "name": "code-review",
+  "description": "Automated code review workflow",
+  "version": "1.0.0",
+  "steps": [
+    {
+      "id": 1,
+      "name": "Read Code",
+      "description": "Read and understand the code structure",
+      "agent": "CodeReader",
+      "task": "Read and analyze the code structure, identify main components and dependencies",
+      "systemPrompt": "You are a code analyst. Read code carefully and identify its structure, components, and dependencies.",
+      "temperature": 0.3,
+      "autoAdvance": true
+    },
+    {
+      "id": 2,
+      "name": "Analyze Bugs",
+      "description": "Identify potential bugs and issues",
+      "agent": "BugHunter",
+      "task": "Identify potential bugs, logic errors, and edge cases in the code",
+      "systemPrompt": "You are a bug hunter. Find potential bugs, logic errors, and edge cases.",
+      "temperature": 0.4,
+      "usePreviousOutput": true,
+      "autoAdvance": true
+    },
+    {
+      "id": 3,
+      "name": "Security Check",
+      "description": "Check for security vulnerabilities",
+      "agent": "SecurityExpert",
+      "task": "Check for security vulnerabilities, injection attacks, and data exposure",
+      "systemPrompt": "You are a security expert. Find security vulnerabilities and recommend fixes.",
+      "temperature": 0.3,
+      "usePreviousOutput": true,
+      "autoAdvance": true
+    },
+    {
+      "id": 4,
+      "name": "Performance Analysis",
+      "description": "Analyze performance implications",
+      "agent": "PerformanceAnalyst",
+      "task": "Analyze performance implications, identify bottlenecks and optimization opportunities",
+      "systemPrompt": "You are a performance analyst. Identify bottlenecks and optimization opportunities.",
+      "temperature": 0.4,
+      "usePreviousOutput": true,
+      "autoAdvance": true
+    },
+    {
+      "id": 5,
+      "name": "Generate Report",
+      "description": "Generate comprehensive review report",
+      "agent": "ReportGenerator",
+      "task": "Generate a comprehensive code review report with findings and recommendations",
+      "systemPrompt": "You are a technical writer. Create clear, actionable code review reports.",
+      "temperature": 0.5,
+      "usePreviousOutput": true
+    }
+  ]
+}

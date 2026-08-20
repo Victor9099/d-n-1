@@ -1,0 +1,71 @@
+{
+  "name": "feature-development",
+  "description": "Complete feature development workflow",
+  "version": "1.0.0",
+  "steps": [
+    {
+      "id": 1,
+      "name": "Requirements Analysis",
+      "description": "Analyze and document requirements",
+      "agent": "ProductAnalyst",
+      "task": "Analyze the feature requirements and create detailed specification",
+      "systemPrompt": "You are a product analyst. Break down features into detailed requirements and specifications.",
+      "temperature": 0.4,
+      "autoAdvance": true
+    },
+    {
+      "id": 2,
+      "name": "Architecture Design",
+      "description": "Design the solution architecture",
+      "agent": "SoftwareArchitect",
+      "task": "Design the technical architecture and component structure",
+      "systemPrompt": "You are a software architect. Design scalable, maintainable solutions.",
+      "temperature": 0.3,
+      "usePreviousOutput": true,
+      "autoAdvance": true
+    },
+    {
+      "id": 3,
+      "name": "Implementation",
+      "description": "Implement the solution",
+      "agent": "Developer",
+      "task": "Implement the feature based on the architecture design",
+      "systemPrompt": "You are a senior developer. Write clean, efficient, well-documented code.",
+      "temperature": 0.3,
+      "usePreviousOutput": true,
+      "autoAdvance": true
+    },
+    {
+      "id": 4,
+      "name": "Testing",
+      "description": "Write comprehensive tests",
+      "agent": "QAEngineer",
+      "task": "Write unit tests, integration tests, and edge case tests",
+      "systemPrompt": "You are a QA engineer. Write comprehensive tests to ensure code quality.",
+      "temperature": 0.3,
+      "usePreviousOutput": true,
+      "autoAdvance": true
+    },
+    {
+      "id": 5,
+      "name": "Documentation",
+      "description": "Document the feature",
+      "agent": "TechnicalWriter",
+      "task": "Create user documentation and API documentation",
+      "systemPrompt": "You are a technical writer. Create clear, comprehensive documentation.",
+      "temperature": 0.5,
+      "usePreviousOutput": true,
+      "autoAdvance": true
+    },
+    {
+      "id": 6,
+      "name": "Code Review",
+      "description": "Final code review",
+      "agent": "CodeReviewer",
+      "task": "Review all code, tests, and documentation for quality and completeness",
+      "systemPrompt": "You are a code reviewer. Ensure code quality, test coverage, and documentation completeness.",
+      "temperature": 0.3,
+      "usePreviousOutput": true
+    }
+  ]
+}

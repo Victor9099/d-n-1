@@ -1,0 +1,75 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'GUIDE-VI.md'
+      - '*.md'
+  workflow_dispatch:
+
+jobs:
+  deploy-docs:
+    name: Deploy Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    - name: Install documentation generator
+      run: npm install -g docsify-cli
+
+    - name: Build documentation
+      run: |
+        mkdir -p docs-site
+        cp README.md docs-site/
+        cp GUIDE-VI.md docs-site/
+        cp QUICKSTART.md docs-site/
+
+        # Create index.html
+        cat > docs-site/index.html << 'EOF'
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <title>Pi Agent Core Documentation</title>
+          <meta name="description" content="Pi Agent Core - AI Agent Framework">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify-themeable@0/dist/css/theme-simple.css">
+        </head>
+        <body>
+          <div id="app"></div>
+          <script>
+            window.$docsify = {
+              name: 'Pi Agent Core',
+              repo: '${{ github.repository }}',
+              loadSidebar: true,
+              subMaxLevel: 3,
+              search: 'auto'
+            }
+          </script>
+          <script src="https://cdn.jsdelivr.net/npm/docsify/lib/docsify.min.js"></script>
+          <script src="https://cdn.jsdelivr.net/npm/docsify/lib/plugins/search.min.js"></script>
+        </body>
+        </html>
+        EOF
+
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./docs-site
+        publish_branch: gh-pages
+
+    - name: Notify deployment
+      if: success()
+      run: |
+        echo "📚 Documentation deployed to: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
