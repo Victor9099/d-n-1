@@ -1,0 +1,135 @@
+# LiteLLM Proxy Configuration
+# Documentation: https://docs.litellm.ai/docs/proxy/configs
+
+model_list:
+  # ═══════════════════════════════════════════
+  # ANTHROPIC MODELS
+  # ═══════════════════════════════════════════
+  - model_name: claude-opus-4
+    litellm_params:
+      model: anthropic/claude-opus-4
+      api_key: os.environ/ANTHROPIC_API_KEY
+      timeout: 600
+      
+  - model_name: claude-sonnet-4
+    litellm_params:
+      model: anthropic/claude-sonnet-4
+      api_key: os.environ/ANTHROPIC_API_KEY
+      timeout: 600
+
+  # ═══════════════════════════════════════════
+  # OPENAI MODELS
+  # ═══════════════════════════════════════════
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      
+  - model_name: gpt-4-turbo
+    litellm_params:
+      model: openai/gpt-4-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ═══════════════════════════════════════════
+  # GOOGLE MODELS
+  # ═══════════════════════════════════════════
+  - model_name: gemini-1.5-pro
+    litellm_params:
+      model: gemini/gemini-1.5-pro
+      api_key: os.environ/GOOGLE_API_KEY
+      
+  - model_name: gemini-1.5-flash
+    litellm_params:
+      model: gemini/gemini-1.5-flash
+      api_key: os.environ/GOOGLE_API_KEY
+
+  # ═══════════════════════════════════════════
+  # LOCAL MODELS (OLLAMA)
+  # ═══════════════════════════════════════════
+  - model_name: llama3.1
+    litellm_params:
+      model: ollama/llama3.1
+      api_base: http://localhost:11434
+      
+  - model_name: qwen2.5-coder
+    litellm_params:
+      model: ollama/qwen2.5-coder:7b
+      api_base: http://localhost:11434
+
+  # ═══════════════════════════════════════════
+  # OPENROUTER (100+ MODELS)
+  # ═══════════════════════════════════════════
+  - model_name: openrouter/claude-3.5-sonnet
+    litellm_params:
+      model: openrouter/anthropic/claude-3.5-sonnet
+      api_key: os.environ/OPENROUTER_API_KEY
+      
+  - model_name: openrouter/gpt-4o
+    litellm_params:
+      model: openrouter/openai/gpt-4o
+      api_key: os.environ/OPENROUTER_API_KEY
+
+# ═══════════════════════════════════════════
+# GENERAL SETTINGS
+# ═══════════════════════════════════════════
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL  # Optional: PostgreSQL for tracking
+  
+  # Enable UI dashboard
+  otel_export: false
+  
+  # Rate limiting
+  max_budget: 100.0  # Max budget in USD per user
+  budget_duration: "30d"  # Budget reset duration
+
+# ═══════════════════════════════════════════
+# LITELLM SETTINGS
+# ═══════════════════════════════════════════
+litellm_settings:
+  # Drop unsupported parameters instead of erroring
+  drop_params: true
+  
+  # Logging
+  set_verbose: false
+  
+  # Caching (giảm chi phí 30-50%)
+  cache: true
+  cache_params:
+    type: redis  # hoặc in_memory, redis
+    host: localhost
+    port: 6379
+    # password: os.environ/REDIS_PASSWORD  # Uncomment if Redis requires auth
+    
+  # Timeout settings
+  request_timeout: 600  # seconds
+  
+  # Retry logic
+  num_retries: 3
+  retry_delay: 1
+  
+  # Fallback models (khi primary model fails)
+  fallbacks:
+    - claude-sonnet-4: ["gpt-4o", "gemini-1.5-pro"]
+    - gpt-4o: ["claude-sonnet-4", "gemini-1.5-pro"]
+    
+  # Router settings
+  router_settings:
+    routing_strategy: simple-shuffle  # hoặc latency-based-routing
+    num_retries: 3
+    timeout: 600
+
+# ═══════════════════════════════════════════
+# ENVIRONMENT VARIABLES NEEDED
+# ═══════════════════════════════════════════
+# export ANTHROPIC_API_KEY="your-key"
+# export OPENAI_API_KEY="your-key"
+# export GOOGLE_API_KEY="your-key"
+# export OPENROUTER_API_KEY="your-key"
+# export LITELLM_MASTER_KEY="your-proxy-key"
+# export DATABASE_URL="postgresql://user:pass@localhost:5432/litellm"  # Optional

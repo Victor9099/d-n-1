@@ -1,0 +1,31 @@
+{
+  "id": "pi",
+  "label": "Pi Coding Agent",
+  "description": "Advanced AI coding agent with multi-agent orchestration",
+  "enabledByDefault": true,
+  "defaultModeId": "default",
+  "modes": [
+    {
+      "id": "default",
+      "label": "Default Mode",
+      "description": "Standard Pi agent with full tool access",
+      "icon": "Sparkles",
+      "colorTier": "safe"
+    },
+    {
+      "id": "auto",
+      "label": "Auto Mode",
+      "description": "Automatic tool execution without prompts",
+      "icon": "Zap",
+      "colorTier": "moderate",
+      "isUnattended": true
+    },
+    {
+      "id": "multi-agent",
+      "label": "Multi-Agent Mode",
+      "description": "Full hierarchy: Supervisor → Lead → Peer → Workers",
+      "icon": "Users",
+      "colorTier": "moderate"
+    }
+  ]
+}

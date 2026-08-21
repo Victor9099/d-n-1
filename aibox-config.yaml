@@ -1,0 +1,16 @@
+providers:
+  - name: aibox
+    type: openai-compatible
+    base_url: https://api.ai-box.vn/v1
+    api_key: ${AIBOX_API_KEY}
+    models:
+      - id: deepseek-v4-pro-0813
+        name: DeepSeek V4 Pro
+      - id: deepseek-v3
+        name: DeepSeek V3
+      - id: grok-4
+        name: Grok 4
+
+server:
+  port: 8080
+  host: localhost
